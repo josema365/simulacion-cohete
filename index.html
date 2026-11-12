@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simulación de Despegue de Cohete - Métodos Numéricos</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+    .container { max-width: 1300px; margin: auto; }
+    h1 { color: #38bdf8; margin-bottom: 4px; font-size: 1.6rem; }
+    p.sub { color: #94a3b8; margin-top: 0; margin-bottom: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(145px, 1fr)); gap: 12px; background: #1e293b; padding: 16px; border-radius: 10px; margin-bottom: 14px; }
+    label { display: flex; flex-direction: column; font-size: 0.82rem; color: #cbd5e1; }
+    input { margin-top: 4px; padding: 8px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: #fff; font-weight: 600; }
+    button { grid-column: 1 / -1; padding: 11px; background: #0284c7; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 0.95rem; }
+    button:hover { background: #0369a1; }
+    #aviso { display: none; background: #422006; border-left: 4px solid #f59e0b; color: #fde68a; padding: 10px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 0.88rem; }
+    #aviso.error { background: #450a0a; border-left-color: #ef4444; color: #fecaca; }
+    .visual-row { display: grid; grid-template-columns: 240px 1fr 1fr; gap: 18px; margin-bottom: 20px; }
+    .card { background: #1e293b; padding: 16px; border-radius: 10px; }
+    .rocket-box { display: flex; flex-direction: column; align-items: center; justify-content: space-between; }
+    #rocketCanvas { background: linear-gradient(to top, #1e3a8a, #020617); border-radius: 8px; border: 1px solid #334155; }
+    .justification { background: #1e293b; border-left: 4px solid #38bdf8; padding: 14px 18px; border-radius: 8px; margin-bottom: 20px; font-size: 0.9rem; line-height: 1.5; color: #e2e8f0; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    th, td { border-bottom: 1px solid #334155; padding: 6px 8px; text-align: right; white-space: nowrap; }
+    th { color: #38bdf8; }
+    tr:last-child { background: #0f172a; font-weight: bold; color: #38bdf8; }
+    @media (max-width: 960px) { .visual-row { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Simulación del Despegue de un Cohete Experimental</h1>
+  <p class="sub">Comparación: Solución Analítica vs. Euler, Heun y Runge-Kutta de Cuarto Orden (RK4)</p>
+
+  <div class="grid">
+    <label>Masa m (kg)<input type="number" id="m" value="1000" step="50"></label>
+    <label>Empuje T (N)<input type="number" id="T" value="15000" step="500"></label>
+    <label>Gravedad g (m/s²)<input type="number" id="g" value="9.81" step="0.01"></label>
+    <label>Resistencia k (kg/s)<input type="number" id="k" value="100" step="5"></label>
+    <label>Tiempo final tf (s)<input type="number" id="tMax" value="20" step="1"></label>
+    <label>Paso h (s)<input type="number" id="h" value="2" step="0.5"></label>
+    <button onclick="simular()">Ejecutar Simulación y Animar Despegue</button>
+  </div>
+
+  <div id="aviso"></div>
+
+  <div class="visual-row">
+    <div class="card rocket-box">
+      <strong style="color:#38bdf8; font-size:0.9rem; margin-bottom:8px;">Despegue en Vivo</strong>
+      <canvas id="rocketCanvas" width="200" height="270"></canvas>
+      <div id="telemetria" style="font-size:0.8rem; color:#cbd5e1; margin-top:8px; text-align:center;">t = 0.0 s | y = 0.0 m</div>
+    </div>
+    <div class="card"><canvas id="chartVel"></canvas></div>
+    <div class="card"><canvas id="chartAlt"></canvas></div>
+  </div>
+
+  <div class="justification">
+    <strong style="color:#38bdf8;">Justificación de Precisión (Ampliación Euler vs. Heun vs. RK4):</strong><br>
+    Para un mismo tamaño de paso (<span id="lblH">h = 2 s</span>), el método de <strong>Runge-Kutta de cuarto orden (RK4) es el más preciso</strong> (error de truncamiento global O(h⁴), ya que evalúa cuatro pendientes ponderadas dentro de cada intervalo [t<sub>n</sub>, t<sub>n+1</sub>]). En segundo lugar se ubica <strong>Heun</strong> O(h²), que promedia la pendiente inicial y final, mientras que <strong>Euler</strong> O(h) presenta el mayor error porque asume que la aceleración inicial permanece constante durante todo el intervalo.
+    <div id="resumenErrores" style="margin-top:8px; color:#94a3b8;"></div>
+  </div>
+
+  <div class="card" style="overflow-x:auto;">
+    <h3 style="margin-top:0; color:#38bdf8;">Tabla de Iteraciones y Comparación de Errores</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>t (s)</th>
+          <th>v Exacta</th>
+          <th>v Euler</th>
+          <th>v Heun</th>
+          <th>v RK4</th>
+          <th>Error |v| Euler</th>
+          <th>Error |v| Heun</th>
+          <th>Error |v| RK4</th>
+          <th>y Exacta</th>
+          <th>y Euler</th>
+          <th>y Heun</th>
+          <th>y RK4</th>
+          <th>Error |y| Euler</th>
+          <th>Error |y| Heun</th>
+          <th>Error |y| RK4</th>
+        </tr>
+      </thead>
+      <tbody id="tablaBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  let chartV, chartY, animId;
+
+  function mostrarAviso(texto, esError) {
+    const a = document.getElementById('aviso');
+    if (!texto) { a.style.display = 'none'; a.textContent = ''; return; }
+    a.textContent = texto;
+    a.className = esError ? 'error' : '';
+    a.style.display = 'block';
+  }
+
+  function animarCohete(tiempos, alturas) {
+    if (animId) cancelAnimationFrame(animId);
+    const canvas = document.getElementById('rocketCanvas');
+    const ctx = canvas.getContext('2d');
+    const telemetria = document.getElementById('telemetria');
+    const maxAlt = Math.max(...alturas, 1);
+    let idx = 0;
+    let lastTime = 0;
+
+    function dibujar(timestamp) {
+      if (timestamp - lastTime > 220) {
+        lastTime = timestamp;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = '#475569';
+        ctx.fillRect(40, 248, 120, 8);
+
+        const yActual = alturas[idx];
+        const tActual = tiempos[idx];
+        const progreso = yActual / maxAlt;
+        const posY = 235 - progreso * 195;
+
+        ctx.fillStyle = idx % 2 === 0 ? '#f97316' : '#facc15';
+        ctx.beginPath();
+        ctx.moveTo(93, posY + 12);
+        ctx.lineTo(107, posY + 12);
+        ctx.lineTo(100, posY + 26 + (idx % 2) * 5);
+        ctx.fill();
+
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(92, posY - 14, 16, 26);
+        ctx.fillStyle = '#ef4444';
+        ctx.beginPath();
+        ctx.moveTo(92, posY - 14);
+        ctx.lineTo(108, posY - 14);
+        ctx.lineTo(100, posY - 26);
+        ctx.fill();
+
+        telemetria.textContent = `t = ${tActual} s | y = ${yActual.toFixed(1)} m`;
+
+        if (idx < alturas.length - 1) idx++;
+      }
+      if (idx < alturas.length - 1) {
+        animId = requestAnimationFrame(dibujar);
+      }
+    }
+    animId = requestAnimationFrame(dibujar);
+  }
+
+  function simular() {
+    const m = parseFloat(document.getElementById('m').value);
+    const T = parseFloat(document.getElementById('T').value);
+    const g = parseFloat(document.getElementById('g').value);
+    const k = parseFloat(document.getElementById('k').value);
+    const tMax = parseFloat(document.getElementById('tMax').value);
+    const h = parseFloat(document.getElementById('h').value);
+
+    // Validaciones
+    if ([m, T, g, k, tMax, h].some(isNaN)) {
+      mostrarAviso('Todos los parámetros deben ser números válidos.', true); return;
+    }
+    if (m <= 0 || g <= 0 || tMax <= 0 || h <= 0) {
+      mostrarAviso('m, g, tf y h deben ser mayores que cero.', true); return;
+    }
+    if (k <= 0) {
+      mostrarAviso('La resistencia k debe ser mayor que cero (con k = 0 la solución analítica usada no aplica).', true); return;
+    }
+    if (h > tMax) {
+      mostrarAviso('El paso h no puede ser mayor que el tiempo final tf.', true); return;
+    }
+    if (T <= m * g) {
+      mostrarAviso('El empuje T no supera el peso m·g (' + (m * g).toFixed(1) + ' N): el cohete no despega.', true); return;
+    }
+
+    const pasos = Math.round(tMax / h);
+    const tFinalReal = pasos * h;
+    let msg = '';
+    if (Math.abs(tFinalReal - tMax) > 1e-9) {
+      msg = 'tf no es múltiplo de h: la simulación termina en t = ' + tFinalReal.toFixed(2) + ' s.';
+    }
+    const alphaChk = k / m;
+    if (h * alphaChk > 2) {
+      msg += (msg ? ' ' : '') + 'Paso h demasiado grande: Euler puede ser inestable (h·k/m > 2).';
+    }
+    mostrarAviso(msg, false);
+
+    document.getElementById('lblH').textContent = `h = ${h} s`;
+
+    const a0 = (T / m) - g;
+    const alpha = k / m;
+
+    const fv = (v) => a0 - alpha * v;
+    const vExacta = (t) => (a0 / alpha) * (1 - Math.exp(-alpha * t));
+    const yExacta = (t) => (a0 / alpha) * (t - (1 / alpha) * (1 - Math.exp(-alpha * t)));
+
+    let t = 0, vE = 0, yE = 0, vH = 0, yH = 0, vR = 0, yR = 0;
+    const labels = [], dVEx = [], dVEu = [], dVHe = [], dVRk = [], dYEx = [], dYEu = [], dYHe = [], dYRk = [];
+    let filas = '';
+    let ultimos = null;
+
+    for (let i = 0; i <= pasos; i++) {
+      const ve = vExacta(t);
+      const ye = yExacta(t);
+      const eVE = Math.abs(ve - vE), eVH = Math.abs(ve - vH), eVR = Math.abs(ve - vR);
+      const eYE = Math.abs(ye - yE), eYH = Math.abs(ye - yH), eYR = Math.abs(ye - yR);
+
+      labels.push(t.toFixed(1));
+      dVEx.push(ve); dVEu.push(vE); dVHe.push(vH); dVRk.push(vR);
+      dYEx.push(ye); dYEu.push(yE); dYHe.push(yH); dYRk.push(yR);
+
+      filas += `<tr>
+        <td>${t.toFixed(1)}</td>
+        <td>${ve.toFixed(4)}</td>
+        <td>${vE.toFixed(4)}</td>
+        <td>${vH.toFixed(4)}</td>
+        <td>${vR.toFixed(4)}</td>
+        <td>${eVE.toFixed(4)}</td>
+        <td>${eVH.toFixed(4)}</td>
+        <td>${eVR.toFixed(4)}</td>
+        <td>${ye.toFixed(4)}</td>
+        <td>${yE.toFixed(4)}</td>
+        <td>${yH.toFixed(4)}</td>
+        <td>${yR.toFixed(4)}</td>
+        <td>${eYE.toFixed(4)}</td>
+        <td>${eYH.toFixed(4)}</td>
+        <td>${eYR.toFixed(4)}</td>
+      </tr>`;
+      ultimos = { t, eVE, eVH, eVR, eYE, eYH, eYR };
+
+      // Euler
+      const nextVE = vE + h * fv(vE);
+      const nextYE = yE + h * vE;
+
+      // Heun
+      const k1v = fv(vH), k1y = vH;
+      const k2v = fv(vH + h * k1v), k2y = vH + h * k1v;
+      const nextVH = vH + (h / 2) * (k1v + k2v);
+      const nextYH = yH + (h / 2) * (k1y + k2y);
+
+      // RK4
+      const r1v = fv(vR), r1y = vR;
+      const r2v = fv(vR + 0.5 * h * r1v), r2y = vR + 0.5 * h * r1v;
+      const r3v = fv(vR + 0.5 * h * r2v), r3y = vR + 0.5 * h * r2v;
+      const r4v = fv(vR + h * r3v), r4y = vR + h * r3v;
+      const nextVR = vR + (h / 6) * (r1v + 2 * r2v + 2 * r3v + r4v);
+      const nextYR = yR + (h / 6) * (r1y + 2 * r2y + 2 * r3y + r4y);
+
+      vE = nextVE; yE = nextYE;
+      vH = nextVH; yH = nextYH;
+      vR = nextVR; yR = nextYR;
+      t += h;
+    }
+
+    document.getElementById('tablaBody').innerHTML = filas;
+
+    document.getElementById('resumenErrores').innerHTML =
+      `En t = ${ultimos.t.toFixed(1)} s → Error en v: Euler ${ultimos.eVE.toFixed(4)}, Heun ${ultimos.eVH.toFixed(4)}, RK4 ${ultimos.eVR.toFixed(4)} m/s | ` +
+      `Error en y: Euler ${ultimos.eYE.toFixed(4)}, Heun ${ultimos.eYH.toFixed(4)}, RK4 ${ultimos.eYR.toFixed(4)} m.`;
+
+    animarCohete(labels, dYEx);
+
+    if (chartV) chartV.destroy();
+    if (chartY) chartY.destroy();
+
+    const commonOpts = (title) => ({
+      responsive: true,
+      plugins: {
+        legend: { labels: { color: '#e2e8f0' } },
+        title: { display: true, text: title, color: '#38bdf8', font: { size: 14 } }
+      },
+      scales: {
+        x: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' }, title: { display: true, text: 'Tiempo (s)', color: '#cbd5e1' } },
+        y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } }
+      }
+    });
+
+    chartV = new Chart(document.getElementById('chartVel'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Analítica (Exacta)', data: dVEx, borderColor: '#22c55e', borderWidth: 2.5, pointRadius: 2 },
+          { label: 'Euler', data: dVEu, borderColor: '#ef4444', borderDash: [6, 4], borderWidth: 2 },
+          { label: 'Heun', data: dVHe, borderColor: '#f59e0b', borderWidth: 1.8 },
+          { label: 'RK4', data: dVRk, borderColor: '#38bdf8', borderDash: [2, 2], borderWidth: 2 }
+        ]
+      },
+      options: commonOpts('Velocidad v(t) [m/s]')
+    });
+
+    chartY = new Chart(document.getElementById('chartAlt'), {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Analítica (Exacta)', data: dYEx, borderColor: '#22c55e', borderWidth: 2.5, pointRadius: 2 },
+          { label: 'Euler', data: dYEu, borderColor: '#ef4444', borderDash: [6, 4], borderWidth: 2 },
+          { label: 'Heun', data: dYHe, borderColor: '#f59e0b', borderWidth: 1.8 },
+          { label: 'RK4', data: dYRk, borderColor: '#38bdf8', borderDash: [2, 2], borderWidth: 2 }
+        ]
+      },
+      options: commonOpts('Altura y(t) [m]')
+    });
+  }
+  simular();
+</script>
+</body>
+</html>
